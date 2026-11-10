@@ -27,7 +27,17 @@ Deviations from the plan, and why:
 - **Eval set:** 6 hand-written items, not 50. Grow it from pilot data, as planned.
 - **Vault encryption (§8 decision 2):** only the index is encrypted. Notes stay plain Markdown so Obsidian keeps working; rely on disk encryption for the vault.
 
-Not yet verified live: calls to the Claude API. The first live run reached the API, but every request was rejected because the API key is not scoped to a workspace. Setting `ANTHROPIC_WORKSPACE_ID` in `.env` fixes it. Then run `essence eval` and a first `essence distill` on real exports.
+Verified live with `claude-sonnet-5-5` (2026-11-10):
+
+- **Golden-set eval:** recall 100%, precision 78% (extra candidates that were reasonable, not wrong), skip accuracy 100%, 0 injection violations, $0.044 for 6 items.
+- **End to end on sample documents:** import → distill → accept, then a later document that reverses an earlier decision. Reconcile proposed `supersede`; the change shows in `essence changes` and the model-written weekly digest. Hybrid search ranked the new decision first.
+- **Cost:** $0.014 per distilled source including reconcile and digest, about $12.60/month at 30 items/day.
+- **Fixes from the live run:**
+  - The default triage floor `min_chars` dropped from 300 to 150, because 300 skipped single dense paragraphs.
+  - Skipped sources are re-triaged on every run. That is local and free, so a changed setting reaches them.
+  - Output piped from the CLI on Windows is written as UTF-8, so CJK titles survive.
+
+Still to do with real data: distill a real ChatGPT/Claude export (privacy review first), and grow the eval set from what you accept, edit or reject during the pilot.
 
 ## 1. What we are building
 

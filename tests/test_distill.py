@@ -224,3 +224,14 @@ def test_workspace_header_from_env(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_WORKSPACE_ID", "wrkspc_123")
     p = AnthropicProvider()
     assert p.client.default_headers.get("anthropic-workspace-id") == "wrkspc_123"
+
+
+def test_skipped_sources_are_retriaged_after_config_change(vault):
+    _source(vault, body="One dense idea: atomic notes linked by idea get reused; notes per book stay isolated. " * 2)
+    fake = FakeProvider()
+    report, _, _ = _run(vault, fake, config=Config(min_chars=300))
+    assert report.count("skipped") == 1 and fake.calls == []
+    report, _, _ = _run(vault, fake, config=Config(min_chars=300))
+    assert report.outcomes == []  # still skipped, same content: nothing to report, no LLM call
+    report, _, _ = _run(vault, fake, config=Config(min_chars=100))
+    assert report.count("done") == 1 and len(fake.calls) == 1

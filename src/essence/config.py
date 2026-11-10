@@ -42,7 +42,7 @@ never_cloud_patterns = []
 
 [distill]
 # Items shorter than this (characters) are skipped by triage.
-min_chars = 300
+min_chars = 150
 # Most similar existing notes shown to the extractor / reconciler.
 context_notes = 10
 
@@ -101,7 +101,7 @@ class Config:
     embed_model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
     redact: bool = True
     never_cloud_patterns: list[str] = field(default_factory=list)
-    min_chars: int = 300
+    min_chars: int = 150
     context_notes: int = 10
     encrypt: bool = False
     mcp_host: str = "127.0.0.1"

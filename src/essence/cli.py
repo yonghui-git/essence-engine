@@ -25,7 +25,12 @@ _state: dict[str, Path] = {}
 # Windows consoles default to a legacy code page; keep output readable.
 for _stream in (sys.stdout, sys.stderr):
     try:
-        _stream.reconfigure(errors="replace")  # type: ignore[union-attr]
+        # A console already gets Unicode; pipes and files default to the ANSI
+        # code page on Windows, which cannot hold CJK text, so write UTF-8 there.
+        if _stream.isatty():
+            _stream.reconfigure(errors="replace")  # type: ignore[union-attr]
+        else:
+            _stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
     except (AttributeError, ValueError):
         pass
 

@@ -53,7 +53,8 @@ def _now() -> str:
 
 def pending_sources(conn: sqlite3.Connection, *, force: bool = False, source_ids: list[str] | None = None) -> list[sqlite3.Row]:
     sql = (
-        "SELECT s.* FROM sources s LEFT JOIN distill_state d ON d.source_id = s.id"
+        "SELECT s.*, d.status AS prev_status, d.content_hash AS prev_hash"
+        " FROM sources s LEFT JOIN distill_state d ON d.source_id = s.id"
         " WHERE 1=1"
     )
     params: list = []
@@ -61,7 +62,9 @@ def pending_sources(conn: sqlite3.Connection, *, force: bool = False, source_ids
         sql += f" AND s.id IN ({','.join('?' * len(source_ids))})"
         params += source_ids
     if not force:
-        sql += " AND (d.source_id IS NULL OR d.content_hash != s.hash OR d.status IN ('failed', 'budget'))"
+        # Skipped sources are re-triaged every run: triage is local and free, so a
+        # changed min_chars or a grown source reaches items seen before.
+        sql += " AND (d.source_id IS NULL OR d.content_hash != s.hash OR d.status IN ('failed', 'budget', 'skipped'))"
     sql += " ORDER BY s.captured"
     return conn.execute(sql, params).fetchall()
 
@@ -335,6 +338,11 @@ def distill(
                 (outcome.source_id, source["hash"], outcome.status, outcome.triage, outcome.candidates,
                  outcome.suggestions, outcome.error or None, _now()),
             )
+        unchanged_skip = (
+            outcome.status == "skipped" and source["prev_status"] == "skipped" and source["prev_hash"] == source["hash"]
+        )
+        if unchanged_skip and not force:
+            continue  # still skipped for the same content: nothing to report
         report.outcomes.append(outcome)
         if on_progress:
             on_progress(outcome)

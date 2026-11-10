@@ -37,7 +37,7 @@ def weighted_len(text: str) -> int:
     return len(text) + 2 * cjk
 
 
-def triage(body: str, kind: str, min_chars: int = 300) -> Triage:
+def triage(body: str, kind: str, min_chars: int = 150) -> Triage:
     text = body.strip()
     if weighted_len(text) < min_chars:
         return Triage("skip", f"shorter than {min_chars} characters")
