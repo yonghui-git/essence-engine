@@ -59,6 +59,28 @@ Verified live with `claude-sonnet-5-5` (2026-11-10):
   - Invitations cost about $0.01 each to learn they hold nothing. That is cheaper than adding a classifier.
   - Related notes from one run are not linked to each other, because reconcile only compares against notes already accepted.
 
+**Remaining MVP items (2026-11-10).**
+
+- **Decision support** (one of the report's three first-version features):
+  - Suggested decisions get a review date (`decision_review_days`, default 90).
+  - `essence decisions` lists them with due ones first.
+  - `essence outcome` records the actual outcome and lesson as a new version.
+  - The digest has a "Decisions reviewed" section (expected against actual, and the lesson). It is kept separate from "Changed my mind".
+  - MCP has a `list_decisions` tool.
+- **Eval set grown from reviews:**
+  - `essence eval --export-reviews` turns each reviewed source into an item. Kept notes in their final form are what to find again; rejected ones are what to avoid. Sources where the model rightly found nothing become skip checks.
+  - Review items are matched by meaning with the local embedder (cosine ≥ 0.72), because keyword matching scored reworded or cross-language re-extractions as misses.
+  - Live check on the 8 event documents: recall 67%, precision 81%, skip accuracy 100%, $0.13.
+- **`essence watch web|docs <folder>`:** polling, so it works on synced folders. A file is imported once it has been stable for one interval. Hidden folders and the vault itself are skipped.
+- **MCP resources:** `note://<id>` serves a note's Markdown file.
+- **`essence nightly`:** distill within the budget, propose merges, count due decisions and write last week's digest once. Every step reports and none stops the others. The README shows how to schedule it.
+- **`essence metrics --json`:** counts only, for an opt-in pilot report.
+
+Deferred on purpose:
+- Batch API for nightly jobs: the digest and merges cost cents.
+- Age-encrypted `raw/`.
+- MCP elicitation for "is this a duplicate?": it needs client support to be checked.
+
 Still to do with real data: distill a real ChatGPT/Claude export (privacy review first), and grow the eval set from what you accept, edit or reject during the pilot.
 
 ## 1. What we are building

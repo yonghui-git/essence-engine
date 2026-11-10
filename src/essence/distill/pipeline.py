@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import sqlite3
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from essence.config import Config
 from essence.distill import prompts
@@ -166,12 +166,14 @@ def validate_decisions(decisions: list[dict], items: list[tuple[str, dict, list[
     return by_cid
 
 
-def _candidate_note(cand: dict, source_id: str) -> Note:
+def _candidate_note(cand: dict, source_id: str, review_days: int = 0) -> Note:
     kwargs = {}
     if cand["type"] == "claim" and cand.get("confidence") is not None:
         kwargs["confidence"] = cand["confidence"]
     if cand["type"] == "decision" and cand.get("expected_outcome"):
         kwargs["expected_outcome"] = cand["expected_outcome"]
+    if cand["type"] == "decision" and review_days > 0:
+        kwargs["review_on"] = date.today() + timedelta(days=review_days)
     extra = {"why_reusable": cand["why_reusable"]} if cand.get("why_reusable") else {}
     return Note(
         type=NoteType(cand["type"]),
@@ -274,7 +276,7 @@ def distill_source(
         op = d["op"]
         if op == "noop":
             continue
-        cnote = _candidate_note(cand, sid)
+        cnote = _candidate_note(cand, sid, config.decision_review_days)
         if op == "update":
             hit = repo.get(d["target_id"])
             if hit is None:

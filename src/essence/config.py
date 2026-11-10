@@ -45,6 +45,8 @@ never_cloud_patterns = []
 min_chars = 150
 # Most similar existing notes shown to the extractor / reconciler.
 context_notes = 10
+# Suggested decisions get a review date this many days ahead (0 = none); edit it in the inbox.
+decision_review_days = 90
 
 [index]
 # true = encrypt index.db with SQLCipher; the passphrase comes from ESSENCE_DB_KEY.
@@ -103,6 +105,7 @@ class Config:
     never_cloud_patterns: list[str] = field(default_factory=list)
     min_chars: int = 150
     context_notes: int = 10
+    decision_review_days: int = 90
     encrypt: bool = False
     mcp_host: str = "127.0.0.1"
     mcp_port: int = 8765
@@ -153,6 +156,7 @@ def _load_file(path: Path) -> Config:
         never_cloud_patterns=list(priv.get("never_cloud_patterns", [])),
         min_chars=int(dist.get("min_chars", d.min_chars)),
         context_notes=int(dist.get("context_notes", d.context_notes)),
+        decision_review_days=int(dist.get("decision_review_days", d.decision_review_days)),
         encrypt=bool(idx.get("encrypt", d.encrypt)),
         mcp_host=mcp.get("host", d.mcp_host),
         mcp_port=int(mcp.get("port", d.mcp_port)),

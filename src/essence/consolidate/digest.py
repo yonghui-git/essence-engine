@@ -60,10 +60,11 @@ class Week:
 class Change:
     note_id: str
     when: str
-    kind: str  # revised | superseded
+    kind: str  # revised | superseded | outcome (a decision's actual outcome was recorded)
     before: str
     after: str
     reason: str
+    title: str = ""
 
 
 def changes(vault: Vault, conn: sqlite3.Connection, week: Week | None = None) -> list[Change]:
@@ -89,6 +90,9 @@ def changes(vault: Vault, conn: sqlite3.Connection, week: Week | None = None) ->
                 Change(r["id"], when, "superseded", prev["title"] if prev else r["title"],
                        new["title"] if new else (note.superseded_by or "?"), note.change_reason or "")
             )
+        elif note.change_reason == "outcome recorded":
+            out.append(Change(r["id"], when, "outcome", note.expected_outcome or "(no expectation written)",
+                              note.actual_outcome or "", note.lesson or "", note.title))
         else:
             prev = conn.execute(
                 "SELECT title FROM note_versions WHERE note_id = ? AND version < ? ORDER BY version DESC LIMIT 1",
@@ -124,7 +128,9 @@ def build_digest(vault: Vault, conn: sqlite3.Connection, week: Week, *, llm=None
         (start, end),
     ).fetchall()
     pending = conn.execute("SELECT COUNT(*) FROM suggestions WHERE status = 'pending'").fetchone()[0]
-    week_changes = changes(vault, conn, week)
+    all_week = changes(vault, conn, week)
+    week_changes = [c for c in all_week if c.kind != "outcome"]
+    outcomes = [c for c in all_week if c.kind == "outcome"]
 
     out = [f"# Week {week.label}: what I learned and decided", "", f"{week.start:%d %b} – {week.end:%d %b %Y}", ""]
 
@@ -158,6 +164,9 @@ def build_digest(vault: Vault, conn: sqlite3.Connection, week: Week, *, llm=None
             out.append(f"- **{r['title']}** ({t}) `{r['id']}`")
     out += ["", "## Changed my mind", ""]
     out += _lines(week_changes, lambda c: f"- ~~{c.before}~~ → **{c.after}**" + (f" — {c.reason}" if c.reason else ""))
+    out += ["", "## Decisions reviewed", ""]
+    out += _lines(outcomes, lambda c: f"- **{c.title}** `{c.note_id}`: expected {c.before}; actually {c.after}"
+                  + (f". Lesson: {c.reason}" if c.reason else ""))
     out += ["", "## Decisions due for review", ""]
     out += _lines(decisions_due, lambda r: f"- {r['title']} (review on {r['review_on']}) `{r['id']}`")
     out += ["", "## Open questions", ""]

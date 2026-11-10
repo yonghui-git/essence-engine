@@ -445,9 +445,94 @@ def changes(limit: Annotated[int, typer.Option("--limit", "-n")] = 30) -> None:
     if not items:
         typer.echo("No changes yet.")
     for c in items:
-        typer.echo(f"{c.when[:10]}  {c.kind:<10} {c.before}  ->  {c.after}")
+        if c.kind == "outcome":
+            typer.echo(f"{c.when[:10]}  {c.kind:<10} {c.title}: expected {c.before}  ->  actually {c.after}")
+        else:
+            typer.echo(f"{c.when[:10]}  {c.kind:<10} {c.before}  ->  {c.after}")
         if c.reason:
             typer.secho(f"            {c.reason}", fg=typer.colors.BRIGHT_BLACK)
+
+
+@app.command()
+def watch(
+    kind: Annotated[str, typer.Argument(help="web (Obsidian Web Clipper folder) | docs")],
+    folder: Annotated[Path, typer.Argument(help="Folder to watch.")],
+    interval: Annotated[float, typer.Option("--interval", help="Seconds between checks.")] = 30.0,
+    distill_now: Annotated[bool, typer.Option("--distill", help="Distill each new batch right away.")] = False,
+    no_docling: Annotated[bool, typer.Option("--no-docling", help="Use the built-in PDF/DOCX parsers.")] = False,
+) -> None:
+    """Import new or changed clips/documents as they appear (Ctrl+C to stop)."""
+    from essence.capture.base import SourceStore
+    from essence.capture.watch import FolderWatcher, watch as run_watch
+
+    a = _app()
+    try:
+        watcher = FolderWatcher(SourceStore(a.vault, a.config), kind, folder, use_docling=not no_docling)
+    except (FileNotFoundError, ValueError) as exc:
+        _fail(str(exc))
+
+    def on_batch(result, files) -> None:
+        typer.echo(f"{date.today()}  {len(files)} file(s): {result.summary()}")
+        for err in result.errors[:10]:
+            _warn(f"  {err}")
+        with _index(a) as conn:
+            a.refresh(conn)
+        if distill_now and (result.new or result.updated):
+            _run_distill(a, source_ids=result.new + result.updated)
+
+    typer.echo(f"Watching {folder} every {interval:g}s for {kind} files. Ctrl+C to stop.")
+    try:
+        run_watch(watcher, interval=interval, on_batch=on_batch)
+    except KeyboardInterrupt:
+        typer.echo("Stopped.")
+
+
+@app.command()
+def decisions(
+    due: Annotated[bool, typer.Option("--due", help="Only decisions whose review date has come.")] = False,
+) -> None:
+    """Decisions with their review dates; due ones first."""
+    from essence.decisions import list_decisions
+
+    a = _app()
+    with _index(a) as conn:
+        a.refresh(conn)
+        rows = list_decisions(conn, a.vault)
+    if due:
+        rows = [r for r in rows if r.state == "due"]
+    if not rows:
+        typer.echo("No decisions due." if due else "No active decisions.")
+        return
+    colors = {"due": typer.colors.YELLOW, "reviewed": typer.colors.BRIGHT_BLACK}
+    for r in rows:
+        when = f"review {r.review_on}" if r.review_on else ""
+        typer.secho(f"{r.state:<9} {when:<18} {r.title[:70]}  `{r.id}`", fg=colors.get(r.state))
+    n_due = sum(r.state == "due" for r in rows)
+    if n_due:
+        typer.echo(f"\n{n_due} due. Record what happened: essence outcome <id> --actual \"...\" --lesson \"...\"")
+
+
+@app.command()
+def outcome(
+    note_id: Annotated[str, typer.Argument(help="Decision id.")],
+    actual: Annotated[str, typer.Option("--actual", "-a", help="What actually happened.")],
+    lesson: Annotated[str, typer.Option("--lesson", "-l", help="What you would do differently, or keep doing.")] = "",
+    review_on: Annotated[Optional[str], typer.Option("--review-on", help="YYYY-MM-DD to look again; omit to close.")] = None,
+) -> None:
+    """Record a decision's actual outcome and lesson (a new version; the old one is kept)."""
+    from essence.decisions import DecisionError, record_outcome
+
+    a = _app()
+    try:
+        note = record_outcome(a.vault, note_id, actual=actual, lesson=lesson,
+                              next_review=date.fromisoformat(review_on) if review_on else None)
+    except (DecisionError, ValueError) as exc:
+        _fail(str(exc))
+    with _index(a) as conn:
+        a.refresh(conn)
+    typer.echo(f"Recorded outcome for {note.title} (v{note.version}).")
+    if note.expected_outcome:
+        typer.echo(f"  expected: {note.expected_outcome}\n  actual:   {note.actual_outcome}")
 
 
 @app.command()
@@ -559,13 +644,21 @@ def stats() -> None:
 
 
 @app.command("metrics")
-def metrics_cmd() -> None:
+def metrics_cmd(
+    as_json: Annotated[bool, typer.Option("--json", help="Machine-readable, for an opt-in pilot report. Counts only, no content.")] = False,
+) -> None:
     """Pilot metrics: review outcomes, return visits and reuse."""
     from essence.ops import metrics
 
     a = _app()
     with _index(a) as conn:
         m = metrics(conn)
+    if as_json:
+        import json
+        from dataclasses import asdict
+
+        typer.echo(json.dumps({"date": date.today().isoformat(), "version": __version__, **asdict(m)}, indent=1))
+        return
     typer.echo(f"Suggestions reviewed: {m.reviewed}  (pending {m.pending})")
     typer.echo(f"  accepted as-is: {m.accepted} ({m.share(m.accepted)})")
     typer.echo(f"  edited:         {m.edited} ({m.share(m.edited)}), mean {m.mean_edit_chars:.0f} chars changed")
@@ -573,6 +666,25 @@ def metrics_cmd() -> None:
     typer.echo(f"Active days in the last 28: {m.active_days_28}")
     typer.echo(f"Reuse events in the last 7 days: {m.reuse_events_7}")
     typer.echo(f"Notes: {m.notes_active} active, {m.notes_superseded} superseded; sources: {m.sources}")
+
+
+@app.command()
+def nightly(
+    distill_now: Annotated[bool, typer.Option("--distill/--no-distill", help="Distill new sources (within the daily budget).")] = True,
+    summary: Annotated[bool, typer.Option("--summary/--no-summary", help="AI-written summary in the weekly digest.")] = True,
+) -> None:
+    """Distill new sources, propose merges and write last week's digest once. For a scheduler."""
+    from essence.nightly import run_nightly
+
+    a = _app()
+    try:
+        rep = run_nightly(a, distill=distill_now, summary=summary)
+    except IndexKeyError as exc:
+        _fail(str(exc))
+    for line in rep.lines:
+        typer.echo(line)
+    if rep.problems:
+        raise typer.Exit(1)
 
 
 @app.command()
@@ -599,12 +711,30 @@ def cost(days: Annotated[int, typer.Option("--days")] = 30) -> None:
 @app.command("eval")
 def eval_cmd(
     file: Annotated[Optional[Path], typer.Option("--file", help="Golden set JSON (default: the built-in set).")] = None,
+    export_reviews: Annotated[Optional[Path], typer.Option(
+        "--export-reviews", help="Write an eval set built from your reviewed suggestions to this file, then stop.")] = None,
 ) -> None:
     """Score distillation quality on a golden set with the configured model (makes real LLM calls)."""
     from essence.evaluation.run import load_golden, run_eval
     from essence.llm.base import make_provider
 
     a = _app()
+    if export_reviews is not None:
+        import json
+
+        from essence.evaluation.from_reviews import export_reviews as build
+
+        with _index(a) as conn:
+            a.refresh(conn)
+            items = build(a.vault, conn)
+        if not items:
+            _fail("No reviewed suggestions with a source yet; review some first.")
+        export_reviews.write_text(json.dumps(items, ensure_ascii=False, indent=1), encoding="utf-8")
+        n_exp = sum(len(i["expected"]) for i in items)
+        n_avoid = sum(len(i["avoid"]) for i in items)
+        typer.echo(f"Wrote {len(items)} items ({n_exp} kept notes, {n_avoid} rejected) to {export_reviews}.")
+        typer.echo("It contains source text: keep it private. Run it with: essence eval --file " + str(export_reviews))
+        return
     provider = make_provider(a.config)
     if provider is None:
         _fail("No LLM provider configured.")
@@ -618,10 +748,11 @@ def eval_cmd(
         for t in s.titles:
             typer.secho(f"      - {t}", fg=typer.colors.BRIGHT_BLACK)
 
-    rep = run_eval(provider, a.config, items, on_item=show_item)
+    rep = run_eval(provider, a.config, items, on_item=show_item, embedder=a.embedder)
     typer.echo(
         f"\nRecall {rep.recall:.0%}  precision {rep.precision:.0%}  skip accuracy {rep.skip_accuracy:.0%}  "
         f"injection violations {rep.violations}  cost ${rep.cost_usd:.4f}"
+        + (f"  rejected-again {rep.rejected_again}" if any(i.get("avoid") for i in items) else "")
     )
 
 

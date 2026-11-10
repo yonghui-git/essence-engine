@@ -76,7 +76,7 @@ class KnowledgeTools:
         fm = note.frontmatter()
         return {
             **{k: fm[k] for k in ("id", "type", "title", "status", "applies_when", "not_when", "version",
-                                  "confidence", "expected_outcome", "review_on", "superseded_by") if k in fm},
+                                  "confidence", "expected_outcome", "review_on", "actual_outcome", "lesson", "superseded_by") if k in fm},
             "body": note.body,
             "linked_notes": [{"id": r["id"], "title": r["title"]} for r in links],
             "evidence": evidence,
@@ -101,6 +101,35 @@ class KnowledgeTools:
             self._event(conn, "mcp_save", note.id)
         return {"saved_source_id": note.id, "status": status,
                 "next": "It will be distilled and shown to the user in their review inbox before becoming a note."}
+
+    def decisions(self, due_only: bool = True) -> list[dict[str, Any]]:
+        """Active decisions with expected outcomes; by default only those due for review."""
+        from essence.decisions import list_decisions
+        from essence.vault.repo import NoteRepo
+
+        repo = NoteRepo(self.app.vault)
+        with self.app.index() as conn:
+            rows = list_decisions(conn, self.app.vault)
+            self._event(conn, "mcp_decisions", detail=f"due_only={due_only}")
+        out = []
+        for r in rows:
+            if due_only and r.state != "due":
+                continue
+            found = repo.get(r.id)
+            note = found[1] if found else None
+            out.append({"id": r.id, "title": r.title, "state": r.state, "review_on": r.review_on,
+                        "expected_outcome": note.expected_outcome if note else None,
+                        "actual_outcome": note.actual_outcome if note else None})
+        return out
+
+    def note_markdown(self, note_id: str) -> str:
+        """The note file as stored in the vault (frontmatter + Markdown), for MCP resources."""
+        with self.app.index() as conn:
+            row = conn.execute("SELECT path FROM notes WHERE id = ?", (note_id,)).fetchone()
+            if row is None:
+                raise ValueError(f"no note with id {note_id}")
+            self._event(conn, "mcp_read", note_id, "resource")
+        return (self.app.vault.root / row["path"]).read_text(encoding="utf-8")
 
     def inbox(self) -> list[dict[str, Any]]:
         items, _ = pending(self.app.vault)
@@ -129,6 +158,16 @@ def build_server(app: App):
     @server.tool(description="List suggestions waiting in the user's review inbox.")
     def list_inbox() -> list[dict[str, Any]]:
         return tools.inbox()
+
+    @server.tool(description="The user's decisions with expected outcomes and review dates. due_only=true (default) "
+                             "returns only those whose review date has come; help the user compare expectation and outcome.")
+    def list_decisions(due_only: bool = True) -> list[dict[str, Any]]:
+        return tools.decisions(due_only)
+
+    @server.resource("note://{note_id}", name="note", mime_type="text/markdown",
+                     description="A note from the user's knowledge base, as its Markdown file with YAML frontmatter.")
+    def note_resource(note_id: str) -> str:
+        return tools.note_markdown(note_id)
 
     return server
 

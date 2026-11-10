@@ -30,6 +30,7 @@ export ESSENCE_VAULT=~/knowledge          # or pass --vault each time
 essence import chat ~/Downloads/chatgpt-export.zip   # ChatGPT or Claude export (auto-detected)
 essence import web  ~/ObsidianVault/Clippings        # Obsidian Web Clipper folder
 essence import docs ~/Documents/papers               # PDF, DOCX, Markdown, text, HTML
+essence watch web ~/ObsidianVault/Clippings          # keep importing new clips (add --distill to distill them too)
 
 essence distill --estimate   # what the next run would cost (no LLM calls)
 essence distill        # new or changed sources -> suggestions in inbox/
@@ -40,6 +41,22 @@ essence show ins_01J...
 essence digest         # weekly "what I learned and decided", saved in digests/
 essence changes        # the "changed my mind" log
 essence consolidate    # propose merges of near-duplicate notes
+
+essence decisions      # decisions and their review dates, due ones first
+essence outcome dec_01J... --actual "what happened" --lesson "what I learned"
+```
+
+Suggested decisions get a review date 90 days ahead (`[distill] decision_review_days`; edit it in the inbox). Recording an outcome keeps the earlier version, so the digest can show expected against actual.
+
+### Run it every night
+
+`essence nightly` distills new sources within the daily token budget, proposes merges, lists decisions that are due, and writes last week's digest once. Schedule it:
+
+```bash
+# Windows (Task Scheduler)
+schtasks /Create /SC DAILY /ST 02:00 /TN essence-nightly /TR "C:\path\to\.venv\Scripts\essence.exe --vault C:\path\to\knowledge nightly"
+# macOS / Linux (crontab -e)
+0 2 * * * /path/to/.venv/bin/essence --vault ~/knowledge nightly >> ~/knowledge/.essence/nightly.log 2>&1
 ```
 
 ## Use it from any AI assistant (MCP)
@@ -50,7 +67,7 @@ essence serve --http               # http://127.0.0.1:8765/mcp, bearer token: es
 ```
 
 Claude Code: `claude mcp add essence -- essence --vault ~/knowledge serve`.
-Tools: `search_knowledge`, `read_note_by_id`, `save_to_knowledge_base` (the saved text goes through the review inbox before it becomes a note), `list_inbox`.
+Tools: `search_knowledge`, `read_note_by_id`, `save_to_knowledge_base` (the saved text goes through the review inbox before it becomes a note), `list_inbox`, `list_decisions`. Resources: `note://<id>` returns a note's Markdown file.
 
 ## Trust and measurement
 
@@ -58,9 +75,11 @@ Tools: `search_knowledge`, `read_note_by_id`, `save_to_knowledge_base` (the save
 essence delete src_01J... # remove a source from everything derived from it
 essence encrypt-index     # SQLCipher-encrypt the index (passphrase: ESSENCE_DB_KEY)
 essence doctor            # check credentials, encryption, embeddings, MCP
-essence metrics           # accept / edit / reject rates, active days, reuse
+essence metrics           # accept / edit / reject rates, active days, reuse (--json: counts only, for a pilot report)
 essence cost              # spend from the outbound-call log, monthly projection
 essence eval              # distillation quality on a golden set (makes real LLM calls)
+essence eval --export-reviews mine.json   # build an eval set from your own reviews (contains source text: keep it private)
+essence eval --file mine.json             # ...and check a model or prompt change against it
 ```
 
 Settings live in `.essence/config.toml`: models, effort, daily token budget, `never_cloud_patterns`, embeddings, encryption and the MCP port. Set `[llm] provider = "ollama"` to keep everything on your machine.

@@ -144,9 +144,32 @@ def test_mcp_tools(vault):
 
     server = build_server(a)
     names = {t.name for t in asyncio.run(server.list_tools())}
-    assert names == {"search_knowledge", "read_note_by_id", "save_to_knowledge_base", "list_inbox"}
+    assert names == {"search_knowledge", "read_note_by_id", "save_to_knowledge_base", "list_inbox", "list_decisions"}
     result = asyncio.run(server.call_tool("search_knowledge", {"query": "review"}))
     assert "Review inbox is core" in json.dumps(result.model_dump(), ensure_ascii=False)
+
+    templates = asyncio.run(server.list_resource_templates())
+    assert [t.uri_template for t in templates] == ["note://{note_id}"]
+    contents = asyncio.run(server.read_resource(f"note://{n.id}"))
+    text = json.dumps([c.model_dump() if hasattr(c, "model_dump") else str(c) for c in contents], ensure_ascii=False)
+    assert "Review inbox is core" in text and "type: insight" in text
+
+
+def test_mcp_decisions(vault):
+    from datetime import date, timedelta
+
+    a = App(vault.root)
+    due = Note(type=NoteType.DECISION, title="Weekly review on Sunday", body="b", expected_outcome="I remember more",
+               review_on=date.today() - timedelta(days=1))
+    later = Note(type=NoteType.DECISION, title="Use SQLite", body="b", review_on=date.today() + timedelta(days=30))
+    for n in (due, later):
+        write_note(n, vault.path_for(n))
+    with a.index() as conn:
+        a.refresh(conn)
+    tools = KnowledgeTools(a)
+    assert [d["title"] for d in tools.decisions()] == ["Weekly review on Sunday"]
+    assert tools.decisions()[0]["expected_outcome"] == "I remember more"
+    assert [d["state"] for d in tools.decisions(due_only=False)] == ["due", "upcoming"]
 
 
 def test_bearer_auth():
