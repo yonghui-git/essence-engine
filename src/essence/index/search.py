@@ -15,6 +15,15 @@ from datetime import datetime, timezone
 
 _TOKEN = re.compile(r"\w+", re.UNICODE)
 RRF_K = 60
+VECTOR_BAND = 0.15  # interactive search keeps vector hits within this cosine distance of the best one
+VECTOR_FLOOR = 0.25
+# Words that match almost every note when any word may match; they would drown real hits.
+_STOPWORDS = frozenset(
+    "the and for are but not you your yours with what when where which who whom why how can could should would "
+    "will shall may might must does did doing done has have had having was were been being this that these those "
+    "there their them they its into onto from about over under than then also just very much more most some any "
+    "all each every our ours out off our get got make made use used like way ways thing things".split()
+)
 
 
 @dataclass
@@ -40,7 +49,9 @@ def to_fts_query(text: str, mode: str = "all") -> str:
     if not tokens:
         return ""
     if mode == "any":
-        uniq = list(dict.fromkeys(t.lower() for t in tokens if len(t) > 2))[:64]
+        uniq = list(dict.fromkeys(t.lower() for t in tokens if len(t) > 2 and t.lower() not in _STOPWORDS))[:64]
+        if not uniq:
+            return ""
         return " OR ".join(f'"{t}"' for t in uniq)
     parts = [f'"{t}"' for t in tokens[:-1]] + [f'"{tokens[-1]}"*']
     return " ".join(parts)
@@ -124,30 +135,40 @@ def hybrid_search(
     log: bool = True,
     hop: bool = True,
 ) -> list[SearchHit]:
-    ranked: dict[str, list[int]] = {}
+    ranked: dict[str, list[tuple[int, float]]] = {}  # note id -> [(rank, weight)] per retriever
     via: dict[str, set[str]] = {}
     snippets: dict[str, str] = {}
 
     query = to_fts_query(text, mode)
     if query:
         rows = _fts(conn, query, limit=50, types=types, include_inactive=include_inactive)
+        text_weight = 1.0
         if not rows and mode == "all":
-            rows = _fts(conn, to_fts_query(text, "any"), limit=50, types=types, include_inactive=include_inactive)
+            # No note has every word: fall back to any word, but count that as weaker evidence,
+            # so a note matching one common word cannot outvote a close match in meaning.
+            fallback = to_fts_query(text, "any")
+            rows = _fts(conn, fallback, limit=50, types=types, include_inactive=include_inactive) if fallback else []
+            text_weight = 0.5
         for rank, r in enumerate(rows):
-            ranked.setdefault(r["id"], []).append(rank)
+            ranked.setdefault(r["id"], []).append((rank, text_weight))
             via.setdefault(r["id"], set()).add("text")
             snippets[r["id"]] = r["snip"]
 
     if embedder is not None and text.strip():
         from essence.index.vectors import vector_search
 
-        for rank, (nid, _sim) in enumerate(
-            vector_search(conn, embedder, text, limit=50, include_inactive=include_inactive, types=types)
-        ):
-            ranked.setdefault(nid, []).append(rank)
+        vec = vector_search(conn, embedder, text, limit=50, include_inactive=include_inactive, types=types)
+        if vec and mode == "all":
+            # Vector search ranks every note, related or not. For a person's query keep only the
+            # cluster near the best match, so a weak keyword hit cannot ride on a meaningless vector rank.
+            # (Distillation's related-note lookup, mode="any", keeps the full list for recall.)
+            floor = max(VECTOR_FLOOR, vec[0][1] - VECTOR_BAND)
+            vec = [(nid, sim) for nid, sim in vec if sim >= floor]
+        for rank, (nid, _sim) in enumerate(vec):
+            ranked.setdefault(nid, []).append((rank, 1.0))
             via.setdefault(nid, set()).add("vector")
 
-    scores = {nid: sum(1.0 / (RRF_K + r + 1) for r in ranks) for nid, ranks in ranked.items()}
+    scores = {nid: sum(w / (RRF_K + r + 1) for r, w in ranks) for nid, ranks in ranked.items()}
 
     if hop and scores:
         top = [nid for nid, _ in sorted(scores.items(), key=lambda kv: -kv[1])[:5]]

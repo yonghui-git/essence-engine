@@ -153,9 +153,21 @@ def init_vault(root: Path) -> tuple[Vault, list[Path]]:
     return vault, created
 
 
+_CJK_SLUG = re.compile(r"[぀-ヿ㐀-䶿一-鿿가-힯豈-﫿]")
+
+
 def slugify(text: str, max_len: int = 60) -> str:
-    norm = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode()
-    slug = re.sub(r"[^a-zA-Z0-9]+", "-", norm).strip("-").lower()
+    """File-name slug: accents stripped from Latin text; Chinese, Japanese and Korean kept as is."""
+    out: list[str] = []
+    for ch in text:
+        if _CJK_SLUG.match(ch):
+            out.append(ch)
+            continue
+        base = unicodedata.normalize("NFKD", ch).encode("ascii", "ignore").decode().lower()
+        out.append(base if base.isalnum() else "-")
+    slug = re.sub(r"-+", "-", "".join(out)).strip("-")
+    if _CJK_SLUG.search(slug):
+        max_len = min(max_len, 32)  # each CJK character carries a word; keep paths short
     return slug[:max_len].rstrip("-") or "note"
 
 

@@ -31,6 +31,7 @@ essence import chat ~/Downloads/chatgpt-export.zip   # ChatGPT or Claude export 
 essence import web  ~/ObsidianVault/Clippings        # Obsidian Web Clipper folder
 essence import docs ~/Documents/papers               # PDF, DOCX, Markdown, text, HTML
 
+essence distill --estimate   # what the next run would cost (no LLM calls)
 essence distill        # new or changed sources -> suggestions in inbox/
 essence review         # accept / edit / reject one by one (or edit inbox/*.md, then `essence accept --all`)
 

@@ -122,3 +122,15 @@ def test_digest_sections(vault):
     assert "Will users return weekly?" in text and "## Changed my mind" in text
     w = Week.parse("2026-W46")
     assert w.start == date(2026, 11, 9) and w.label == "2026-W46" and w.contains("2026-11-15T23:00:00")
+
+
+def test_find_accepts_the_path_that_inbox_prints(vault):
+    from essence.distill.inbox import create_suggestion, find
+    from essence.index import open_index
+    from essence.vault.model import Note, NoteType
+
+    with open_index(vault.index_path) as conn:
+        sug = create_suggestion(vault, conn, op="add", note=Note(type=NoteType.INSIGHT, title="Path refs work", body="b"))
+    rel = vault.relpath(sug.path)
+    for ref in (rel, rel.replace("/", "\\"), str(sug.path), sug.path.name, sug.id):
+        assert find(vault, ref).id == sug.id

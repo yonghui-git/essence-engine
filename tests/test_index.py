@@ -128,4 +128,4 @@ def test_search_survives_hostile_input(vault):
 
 def test_slugify():
     assert slugify("Évergreen notes: concept-oriented!") == "evergreen-notes-concept-oriented"
-    assert slugify("你好") == "note"
+    assert slugify("你好") == "你好"  # CJK titles keep readable file names

@@ -263,9 +263,39 @@ def distill_cmd(
     limit: Annotated[Optional[int], typer.Option("--limit", "-n", help="At most this many sources.")] = None,
     source: Annotated[Optional[list[str]], typer.Option("--source", "-s", help="Only this source id (repeatable).")] = None,
     force: Annotated[bool, typer.Option("--force", help="Re-distill sources already processed.")] = False,
+    estimate: Annotated[bool, typer.Option("--estimate", help="Show what a run would cost; make no LLM calls.")] = False,
 ) -> None:
     """Turn new or changed sources into suggested notes in the review inbox."""
+    if estimate:
+        _estimate_distill(_app(), limit=limit, source_ids=source, force=force)
+        return
     _run_distill(_app(), limit=limit, source_ids=source, force=force)
+
+
+def _estimate_distill(a: App, *, limit=None, source_ids=None, force=False) -> None:
+    from essence.distill.pipeline import estimate_distill
+    from essence.llm.base import tokens_today
+
+    with _index(a) as conn:
+        a.refresh(conn)
+        rows = estimate_distill(a.vault, conn, a.config, is_local=a.config.llm_provider == "ollama",
+                                limit=limit, source_ids=source_ids, force=force)
+        used = tokens_today(conn)
+    if not rows:
+        typer.echo("Nothing to distill.")
+        return
+    for r in rows:
+        detail = f"{r.calls} calls  ~{r.input_tokens:>7,} in  ~{r.output_tokens:>6,} out  ${r.cost:.4f}" if r.calls else ""
+        typer.echo(f"  {r.level:<11} {r.title[:52]:<52} {detail}")
+    tin, tout = sum(r.input_tokens for r in rows), sum(r.output_tokens for r in rows)
+    typer.echo(f"Estimate with {a.config.model_extract}: ~{tin:,} input + ~{tout:,} output tokens, "
+               f"about ${sum(r.cost for r in rows):.2f} (rough; actual cost is logged, see `essence cost`).")
+    budget = a.config.daily_token_budget
+    if budget:
+        left = max(0, budget - used)
+        typer.echo(f"Daily token budget: {used:,} used, {left:,} left.")
+        if tin + tout > left:
+            _warn("This run would exceed today's token budget; it will stop when the budget runs out.")
 
 
 def _describe(a: App, sug) -> list[str]:

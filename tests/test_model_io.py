@@ -89,3 +89,13 @@ def test_crlf_and_bom_are_tolerated():
 def test_parse_errors_are_reported(text, message):
     with pytest.raises(NoteParseError, match=message):
         parse_note(text)
+
+
+def test_slugify_keeps_cjk_and_strips_accents():
+    from essence.vault.layout import slugify
+
+    assert slugify("Café au lait: déjà vu!") == "cafe-au-lait-deja-vu"
+    assert slugify("高风险环节要提前设一个有决策权的人") == "高风险环节要提前设一个有决策权的人"
+    assert slugify("参会单位三层匹配法：直接客户、渠道伙伴") == "参会单位三层匹配法-直接客户-渠道伙伴"
+    assert slugify("Use SQLite 用于索引") == "use-sqlite-用于索引"
+    assert len(slugify("长" * 100)) == 32 and slugify("!!!") == "note"

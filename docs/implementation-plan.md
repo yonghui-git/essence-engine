@@ -37,6 +37,28 @@ Verified live with `claude-sonnet-5-5` (2026-11-10):
   - Skipped sources are re-triaged on every run. That is local and free, so a changed setting reaches them.
   - Output piped from the CLI on Windows is written as UTF-8, so CJK titles survive.
 
+**First real-data run (2026-11-10).** 8 anonymized documents from a past event: two speeches, an execution plan, an attendee analysis, speaker introductions and three invitations; mixed Chinese and English.
+
+- **Anonymization before import:**
+  - People were replaced by their roles, and small companies and projects by short descriptions.
+  - Emails, links and street addresses were removed.
+  - A leak-list check passed before anything was sent.
+- **Result:** 18 suggestions for $0.145 (41k input and 6k output tokens).
+  - The three invitations correctly gave none.
+  - 17 suggestions were accepted as written. The one rejected was a list of open questions about an event that had already happened.
+  - Notes stay in the source's language, cite 1–4 excerpts each, and mark a speaker's claim as a claim.
+- **Fixes from this run:**
+  - **Cost estimate:** `essence distill --estimate` prices a run with no LLM calls. It is calibrated on this run: about 1,100 tokens of wrapping per call, 1.4 tokens per CJK character, and about 1,200 output tokens for a full source. For this run it estimated 41,062 input tokens against 41,370 actual, and $0.18 against $0.145.
+  - **Cross-language search:** an English query now finds Chinese notes. Two causes:
+    - At personal scale, vector search returns every note, so a single shared keyword decided the ranking. Interactive search now keeps only vector hits within 0.15 cosine of the best match.
+    - The any-word fallback now skips stopwords and counts half.
+  - **File names:** Chinese, Japanese and Korean titles keep their characters in file names. They used to become `note-<id>.md`.
+  - **Paths:** `accept` and `reject` accept the `inbox/<file>.md` path that `essence inbox` prints.
+- **Seen, not changed:**
+  - Merge proposals found no near-duplicates; the closest pair scored 0.67 against a 0.9 threshold, and those notes are related but distinct.
+  - Invitations cost about $0.01 each to learn they hold nothing. That is cheaper than adding a classifier.
+  - Related notes from one run are not linked to each other, because reconcile only compares against notes already accepted.
+
 Still to do with real data: distill a real ChatGPT/Claude export (privacy review first), and grow the eval set from what you accept, edit or reject during the pilot.
 
 ## 1. What we are building

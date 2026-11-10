@@ -116,9 +116,9 @@ def pending(vault: Vault) -> tuple[list[Suggestion], list[str]]:
 
 
 def find(vault: Vault, ref: str) -> Suggestion | None:
-    """Find by suggestion id, a unique id suffix, or a file name."""
+    """Find by suggestion id, a unique id suffix, a file name, or a path such as `inbox/<file>.md`."""
     items, _ = pending(vault)
-    ref_l = ref.lower()
+    ref_l = ref.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1].lower()  # `essence inbox` prints paths
     exact = [s for s in items if s.id.lower() == ref_l or s.path.name.lower() == ref_l]
     if exact:
         return exact[0]

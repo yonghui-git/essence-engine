@@ -349,3 +349,78 @@ def distill(
         if report.stopped:
             break
     return report
+
+
+# --- Cost estimate (no LLM calls) -------------------------------------------------
+
+_CJK_CHAR = re.compile(r"[぀-ヿ㐀-䶿一-鿿가-힯豈-﫿]")
+# Calibrated on live runs with Claude (2026-11-10): per-call wrapping beyond the system
+# prompt and schema, typical answer sizes, and the reconcile call.
+_CALL_OVERHEAD = 1100
+_EXTRACT_OUT = {"light": 600, "full": 1200}
+_RECONCILE_IN, _RECONCILE_OUT = 2100, 500
+_NOTE_CONTEXT_TOKENS = 120  # one related note shown to the model
+
+
+def approx_tokens(text: str) -> int:
+    """About 3.5 Latin characters per token and 1.4 tokens per CJK character (Claude, measured)."""
+    cjk = len(_CJK_CHAR.findall(text))
+    return int((len(text) - cjk) / 3.5 + cjk * 1.4) + 1
+
+
+@dataclass
+class SourceEstimate:
+    source_id: str
+    title: str
+    level: str  # skip | light | full | never_cloud
+    calls: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cost: float = 0.0
+
+
+def estimate_distill(
+    vault: Vault,
+    conn: sqlite3.Connection,
+    config: Config,
+    *,
+    is_local: bool = False,
+    limit: int | None = None,
+    source_ids: list[str] | None = None,
+    force: bool = False,
+) -> list[SourceEstimate]:
+    """What `distill` would send, priced with the configured model. Runs triage only."""
+    from essence.llm.cost import cost_usd
+
+    schema_text = vault.schema_path.read_text(encoding="utf-8") if vault.schema_path.is_file() else ""
+    system = prompts.EXTRACT_SYSTEM.format(
+        security=prompts.SECURITY_RULES, schema=schema_text.strip() or "(default)", max_candidates=6
+    )
+    fixed = approx_tokens(system) + approx_tokens(str(prompts.extraction_schema())) + _CALL_OVERHEAD
+    n_notes = conn.execute("SELECT COUNT(*) FROM notes WHERE status = 'active' AND type != 'source'").fetchone()[0]
+    context = min(config.context_notes, n_notes) * _NOTE_CONTEXT_TOKENS
+
+    out: list[SourceEstimate] = []
+    sources = pending_sources(conn, force=force, source_ids=source_ids)
+    for source in sources[:limit] if limit is not None else sources:
+        note = read_note(vault.root / source["path"])
+        est = SourceEstimate(source["id"], source["title"], "never_cloud")
+        if (note.never_cloud or source["never_cloud"]) and not is_local:
+            out.append(est)
+            continue
+        t = triage(note.body, source["source_kind"] or "", config.min_chars)
+        est.level = t.level
+        if t.level != "skip":
+            excerpts = [(r["id"], r["text"]) for r in conn.execute(
+                "SELECT id, text FROM excerpts WHERE source_id = ? ORDER BY start_offset", (source["id"],))]
+            windows = max(1, len(_windows(excerpts)))
+            est.calls = windows
+            est.input_tokens = windows * (fixed + context) + sum(approx_tokens(x) for _, x in excerpts)
+            est.output_tokens = windows * _EXTRACT_OUT[t.level]
+            if n_notes:  # a reconcile call follows when there are notes to compare against
+                est.calls += 1
+                est.input_tokens += _RECONCILE_IN + context
+                est.output_tokens += _RECONCILE_OUT
+            est.cost = 0.0 if is_local else cost_usd(config.model_extract, est.input_tokens, est.output_tokens)
+        out.append(est)
+    return out

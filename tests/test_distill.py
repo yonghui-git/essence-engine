@@ -235,3 +235,18 @@ def test_skipped_sources_are_retriaged_after_config_change(vault):
     assert report.outcomes == []  # still skipped, same content: nothing to report, no LLM call
     report, _, _ = _run(vault, fake, config=Config(min_chars=100))
     assert report.count("done") == 1 and len(fake.calls) == 1
+
+
+def test_estimate_makes_no_calls_and_prices_by_triage(vault):
+    from essence.distill.pipeline import approx_tokens, estimate_distill
+
+    _source(vault, origin="a")
+    _source(vault, body="hi", origin="b", title="tiny")
+    with open_index(vault.index_path) as conn:
+        reindex(vault, conn)
+        rows = {r.title: r for r in estimate_distill(vault, conn, CFG)}
+        assert conn.execute("SELECT COUNT(*) FROM llm_calls").fetchone()[0] == 0
+    assert rows["tiny"].level == "skip" and rows["tiny"].cost == 0
+    big = rows["AI and my notes"]
+    assert big.calls == 1 and big.input_tokens > 0 and big.cost > 0  # no notes yet: no reconcile call
+    assert approx_tokens("收藏本身并不产生价值") >= 10 > approx_tokens("abcdefghij")
