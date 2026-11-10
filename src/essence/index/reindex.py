@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from essence.index.db import DERIVED_FTS, DERIVED_TABLES
+from essence.segment import segment
 from essence.vault.io import NoteParseError, read_note
 from essence.vault.layout import Vault
 from essence.vault.model import Note, NoteType
@@ -17,6 +18,7 @@ from essence.vault.model import Note, NoteType
 @dataclass
 class ReindexReport:
     sources: int = 0
+    excerpts: int = 0
     notes: int = 0
     versions: int = 0
     edges: int = 0
@@ -67,6 +69,14 @@ def reindex(vault: Vault, conn: sqlite3.Connection) -> ReindexReport:
                     (note.id, note.title, note.source_kind, note.origin_ref, rel,
                      _iso(note.captured), int(bool(note.never_cloud)), _hash(path)),
                 )
+                for exc in segment(note.body):
+                    ref = exc.ref(note.id)
+                    conn.execute(
+                        "INSERT INTO excerpts (id, source_id, start_offset, end_offset, text) VALUES (?, ?, ?, ?, ?)",
+                        (ref, note.id, exc.start, exc.end, exc.text),
+                    )
+                    conn.execute("INSERT INTO excerpts_fts (excerpt_id, text) VALUES (?, ?)", (ref, exc.text))
+                    report.excerpts += 1
                 report.sources += 1
                 continue
 

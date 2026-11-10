@@ -77,6 +77,8 @@ FIELD_ORDER = [
     "created_by",
     "created",
     "updated",
+    "superseded_by",
+    "change_reason",
     # source
     "source_kind",
     "origin_ref",
@@ -117,6 +119,9 @@ class Note(BaseModel):
     created_by: Origin = Origin.USER
     created: datetime = Field(default_factory=_now)
     updated: datetime | None = None
+    # Set when a newer note replaces this one, or when this version changed an earlier one.
+    superseded_by: str | None = None
+    change_reason: str | None = None
 
     # Source-only
     source_kind: str | None = None  # chat | web | doc

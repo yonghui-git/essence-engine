@@ -1,5 +1,5 @@
 from essence.index import open_index, reindex, search
-from essence.index.db import schema_version
+from essence.index.db import _MIGRATIONS, schema_version
 from essence.index.search import to_fts_query
 from essence.vault.io import write_note
 from essence.vault.layout import init_vault, slugify
@@ -63,7 +63,7 @@ def test_index_can_be_deleted_and_rebuilt(vault):
     for extra in ("-wal", "-shm"):
         vault.index_path.with_name(vault.index_path.name + extra).unlink(missing_ok=True)
     with open_index(vault.index_path) as conn:
-        assert schema_version(conn) == 1
+        assert schema_version(conn) == len(_MIGRATIONS)
         reindex(vault, conn)
         assert [h.title for h in search(conn, "forgetting")] == ["Forgetting curve is steep"]
 

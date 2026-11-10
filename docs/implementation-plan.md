@@ -5,6 +5,30 @@ Status: draft, 2026-11-10. Built from two artifacts made during the research:
 - Research report: [Personal knowledge accumulation systems: research report](https://claude.ai/artifact/2LeSktLjPxocAnyhndw9om) (doc, rev 14)
 - Deck: [Personal knowledge accumulation: ideas, architecture and opportunity](https://claude.ai/artifact/TsrKsZbLcD8NEREyz6oxYL) (21 slides)
 
+## 0. Implementation status (2026-11-10)
+
+Weeks 1–6 are implemented and covered by offline tests (`pytest`: fake LLM, fake embedder).
+
+| Week | Built | Where |
+| --- | --- | --- |
+| 1 | Vault layout, typed notes with lossless round-trip, rebuildable index, full-text search, CLI | `vault/`, `index/db.py`, `index/reindex.py` |
+| 2 | ChatGPT / Claude export importers (zip, folder or json; active branch only), web-clip and document importers, idempotent re-import, excerpt segmentation, redaction, `never_cloud` | `capture/`, `segment.py`, `privacy/redact.py` |
+| 3 | Provider-neutral LLM client with outbound-call log, cost table and daily token budget; Anthropic (structured outputs, refusal fallback) and Ollama providers; triage → extract → reconcile → inbox, with every model output validated | `llm/`, `distill/` |
+| 4 | Review inbox (CLI and editable files), accept / edit / reject with edit distance, versions in `notes/_history`, supersede / update / confirm / link / merge; hybrid search (FTS + vectors + 1-hop links, RRF) | `distill/inbox.py`, `distill/apply.py`, `index/search.py`, `index/vectors.py` |
+| 5 | MCP server (stdio; HTTP on localhost with a bearer token), weekly digest, "changed my mind" log, near-duplicate merge proposals | `mcp_server/`, `consolidate/` |
+| 6 | Propagating delete (orphans go to the inbox), SQLCipher index encryption and migration, metrics, cost report, golden-set eval including a prompt-injection case, `doctor` | `ops.py`, `evaluation/` |
+
+Deviations from the plan, and why:
+
+- **Vectors:** exact numpy cosine search over cached float32 vectors instead of sqlite-vec. That is milliseconds at personal scale and needs no SQLite extension, which also keeps SQLCipher simple. `index/vectors.py` is the swap point.
+- **Batch API:** not used yet. Digest and consolidation calls are few, so real-time calls cost little. Revisit if `essence cost` shows nightly jobs matter.
+- **Triage:** heuristic only (length with CJK weighting, code share, small talk), with no LLM classifier. Measure with `essence cost` before adding one.
+- **Docling:** optional (`[docs]` extra, heavy). Built-in parsers (pypdf, python-docx, plain HTML) are used when it is absent.
+- **Eval set:** 6 hand-written items, not 50. Grow it from pilot data, as planned.
+- **Vault encryption (§8 decision 2):** only the index is encrypted. Notes stay plain Markdown so Obsidian keeps working; rely on disk encryption for the vault.
+
+Not yet verified live: calls to the Claude API. The first live run reached the API, but every request was rejected because the API key is not scoped to a workspace. Setting `ANTHROPIC_WORKSPACE_ID` in `.env` fixes it. Then run `essence eval` and a first `essence distill` on real exports.
+
 ## 1. What we are building
 
 A local-first engine that reads a person's daily inputs (AI chat exports, web clips, documents). For each one it asks **"what is new here compared with what I already know?"** and suggests typed, linked notes. The person accepts, rewords or rejects them in a review inbox. The knowledge base is served to every AI assistant over MCP.

@@ -85,6 +85,22 @@ class Vault:
     def schema_path(self) -> Path:
         return self.root / "schema.md"
 
+    @property
+    def config_path(self) -> Path:
+        return self.state / "config.toml"
+
+    @property
+    def digests(self) -> Path:
+        return self.root / "digests"
+
+    def config(self):
+        from essence.config import load_config
+
+        return load_config(self.config_path)
+
+    def relpath(self, path: Path) -> str:
+        return path.resolve().relative_to(self.root).as_posix()
+
     def is_initialized(self) -> bool:
         return self.state.is_dir() and self.notes.is_dir()
 
@@ -100,7 +116,8 @@ class Vault:
         """Every canonical note file (sources in raw/, knowledge in notes/), excluding history."""
         files: list[Path] = []
         if self.raw.is_dir():
-            files += sorted(self.raw.rglob("*.md"))
+            originals = self.raw / "_originals"
+            files += sorted(p for p in self.raw.rglob("*.md") if not p.is_relative_to(originals))
         for t in KNOWLEDGE_TYPES:
             folder = self.root / t.folder
             if folder.is_dir():
@@ -123,7 +140,13 @@ def init_vault(root: Path) -> tuple[Vault, list[Path]]:
         if not d.exists():
             d.mkdir(parents=True)
             created.append(d)
-    for path, content in [(vault.schema_path, SCHEMA_TEMPLATE), (vault.root / ".gitignore", GITIGNORE)]:
+    from essence.config import DEFAULT_CONFIG
+
+    for path, content in [
+        (vault.schema_path, SCHEMA_TEMPLATE),
+        (vault.root / ".gitignore", GITIGNORE),
+        (vault.config_path, DEFAULT_CONFIG),
+    ]:
         if not path.exists():
             path.write_text(content, encoding="utf-8", newline="\n")
             created.append(path)

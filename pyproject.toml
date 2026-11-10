@@ -8,10 +8,19 @@ dependencies = [
     "pydantic>=2.7",
     "pyyaml>=6.0",
     "typer>=0.12",
+    "anthropic>=2.7",
+    "mcp>=2.3",
+    "numpy>=1.26",
+    "pypdf>=5.0",
+    "python-docx>=1.1",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+vectors = ["fastembed>=0.9"]
+encrypt = ["sqlcipher3-wheels>=0.5.7"]
+docs = ["docling>=2.0"]
+all = ["essence-engine[vectors,encrypt]"]
+dev = ["pytest>=8", "essence-engine[vectors,encrypt]"]
 
 [project.scripts]
 essence = "essence.cli:app"

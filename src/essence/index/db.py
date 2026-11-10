@@ -15,7 +15,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-DERIVED_TABLES = ["edges", "note_versions", "excerpts", "notes", "sources"]
+DERIVED_TABLES = ["note_vectors", "edges", "note_versions", "excerpts", "notes", "sources"]
 DERIVED_FTS = ["notes_fts", "excerpts_fts"]
 
 _MIGRATIONS: list[str] = [
@@ -118,23 +118,102 @@ _MIGRATIONS: list[str] = [
         redactions    INTEGER
     );
     """,
+    # v2: distillation progress and an embedding cache (both operational: costly to recompute)
+    """
+    CREATE TABLE distill_state (
+        source_id    TEXT PRIMARY KEY,
+        content_hash TEXT NOT NULL,
+        status       TEXT NOT NULL,   -- done | skipped | failed | never_cloud | budget
+        triage       TEXT,
+        candidates   INTEGER,
+        suggestions  INTEGER,
+        error        TEXT,
+        updated      TEXT NOT NULL
+    );
+
+    CREATE TABLE embed_cache (
+        hash   TEXT NOT NULL,
+        model  TEXT NOT NULL,
+        dim    INTEGER NOT NULL,
+        vector BLOB NOT NULL,
+        PRIMARY KEY (hash, model)
+    );
+
+    CREATE TABLE note_vectors (     -- derived: note id -> cache key, rebuilt with the index
+        note_id TEXT PRIMARY KEY,
+        hash    TEXT NOT NULL,
+        model   TEXT NOT NULL
+    );
+
+    ALTER TABLE suggestions ADD COLUMN source_id TEXT;
+    ALTER TABLE suggestions ADD COLUMN inbox_path TEXT;
+    ALTER TABLE suggestions ADD COLUMN reason TEXT;
+    """,
 ]
 
 
-def connect(path: Path) -> sqlite3.Connection:
+class IndexKeyError(RuntimeError):
+    pass
+
+
+def _sqlcipher():
+    try:
+        from sqlcipher3 import dbapi2  # type: ignore[import-not-found]
+    except ImportError as exc:
+        raise IndexKeyError(
+            "index encryption needs SQLCipher: pip install 'essence-engine[encrypt]'"
+        ) from exc
+    return dbapi2
+
+
+def connect(path: Path, key: str | None = None) -> sqlite3.Connection:
+    """Open (and migrate) the index. With `key`, the file is SQLCipher-encrypted."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(path)
-    conn.row_factory = sqlite3.Row
+    if key:
+        dbapi = _sqlcipher()
+        conn = dbapi.connect(str(path))
+        conn.row_factory = dbapi.Row
+        conn.execute("PRAGMA key = " + _quote(key))
+        try:
+            conn.execute("SELECT count(*) FROM sqlite_master").fetchone()
+        except dbapi.DatabaseError as exc:
+            conn.close()
+            raise IndexKeyError(
+                f"cannot open {path.name}: wrong ESSENCE_DB_KEY, or the file is not encrypted "
+                "(delete it and run `essence reindex` to rebuild)"
+            ) from exc
+    else:
+        conn = sqlite3.connect(path)
+        conn.row_factory = sqlite3.Row
+        try:
+            conn.execute("SELECT count(*) FROM sqlite_master").fetchone()
+        except sqlite3.DatabaseError as exc:
+            conn.close()
+            raise IndexKeyError(
+                f"cannot open {path.name}: it looks encrypted; set ESSENCE_DB_KEY and [index] encrypt = true"
+            ) from exc
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")
     migrate(conn)
     return conn
 
 
+def _quote(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+def is_encrypted(path: Path) -> bool:
+    """A plain SQLite file starts with a fixed header; an encrypted one doesn't."""
+    if not path.is_file() or path.stat().st_size == 0:
+        return False
+    with path.open("rb") as f:
+        return f.read(16) != b"SQLite format 3\x00"
+
+
 @contextmanager
-def open_index(path: Path) -> Iterator[sqlite3.Connection]:
+def open_index(path: Path, key: str | None = None) -> Iterator[sqlite3.Connection]:
     """Connect, and always close (sqlite3's own context manager only commits)."""
-    conn = connect(path)
+    conn = connect(path, key)
     try:
         yield conn
     finally:
